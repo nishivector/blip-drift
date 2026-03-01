@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Blip Drift</title>
+<script src="https://cdn.jsdelivr.net/npm/tone@15.1.22/build/Tone.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.183.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.183.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;overflow:hidden;background:#1E3A5F;font-family:'Courier New',Courier,monospace;}
+#three-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;}
+#game-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1;display:none;}
+#hud-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:2;pointer-events:none;display:none;}
+#startScreen{position:fixed;top:0;left:0;width:100%;height:100%;z-index:3;display:block;opacity:1;}
+#instructions{position:fixed;top:0;left:0;width:100%;height:100%;z-index:4;background:#1E3A5F;display:none;flex-direction:column;align-items:center;justify-content:center;padding:clamp(20px,5vw,60px);}
+#instructions h2{color:#E8D5A3;font-family:'Courier New',Courier,monospace;font-size:clamp(16px,3vw,24px);letter-spacing:0.15em;margin-bottom:clamp(20px,3vh,40px);}
+#instructions p{color:#4A9ECD;font-family:'Courier New',Courier,monospace;font-size:clamp(12px,2vw,16px);letter-spacing:0.1em;line-height:1.8;text-align:center;max-width:520px;margin-bottom:clamp(8px,1.5vh,16px);}
+#instructions .tap-continue{color:#E8D5A3;font-size:clamp(12px,2vw,14px);letter-spacing:0.2em;margin-top:clamp(20px,4vh,40px);animation:blink-anim 1.8s ease-in-out infinite alternate;}
+@keyframes blink-anim{from{opacity:0.35}to{opacity:1.0}}
+#win-screen,#death-screen{position:fixed;top:0;left:0;width:100%;height:100%;z-index:5;background:#1E3A5F;display:none;flex-direction:column;align-items:center;justify-content:center;padding:clamp(20px,5vw,60px);}
+#win-screen h1,#death-screen h1{color:#FF8C42;font-family:'Courier New',Courier,monospace;font-size:clamp(18px,4vw,32px);letter-spacing:0.15em;margin-bottom:clamp(15px,3vh,30px);text-align:center;}
+#win-screen p,#death-screen p{color:#E8D5A3;font-family:'Courier New',Courier,monospace;font-size:clamp(12px,2vw,16px);letter-spacing:0.1em;line-height:1.8;text-align:center;margin-bottom:clamp(8px,1.5vh,16px);}
+#win-screen .score{color:#E8D5A3;font-size:clamp(14px,2.5vw,20px);letter-spacing:0.2em;margin:clamp(15px,3vh,30px) 0;}
+</style>
+</head>
+<body>
+
+<canvas id="three-canvas"></canvas>
+<canvas id="game-canvas"></canvas>
+<canvas id="hud-canvas"></canvas>
+
+<div id="startScreen">
+  <svg id="start-svg" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style="position:absolute;top:0;left:0;">
+    <defs>
+      <filter id="title-glow" x="-30%" y="-80%" width="160%" height="260%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur">
+          <animate attributeName="stdDeviation" values="3;8;3" dur="2.5s" repeatCount="indefinite"/>
+        </feGaussianBlur>
+        <feFlood flood-color="#FF8C42" result="color"/>
+        <feComposite in="color" in2="blur" operator="in" result="glow"/>
+        <feMerge>
+          <feMergeNode in="glow"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+      <filter id="antenna-glow" x="-200%" y="-200%" width="500%" height="500%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+        <feFlood flood-color="#FF8C42" result="color"/>
+        <feComposite in="color" in2="blur" operator="in" result="glow"/>
+        <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="eye-glow" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+        <feFlood flood-color="#FF8C42" result="color"/>
+        <feComposite in="color" in2="blur" operator="in" result="glow"/>
+        <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+
+    <!-- Option C: Decorative border -->
+    <rect id="border-rect" x="12" y="12" width="100" height="100"
+      fill="none" stroke="#4A9ECD" stroke-width="1" stroke-dasharray="6 10">
+      <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="3.0s"
+        calcMode="linear" repeatCount="indefinite"/>
+    </rect>
+
+    <!-- Option A: Title with amber glow -->
+    <text x="50%" y="32%" text-anchor="middle"
+      font-family="'Courier New', Courier, monospace" font-weight="700"
+      font-size="clamp(36px, 8vw, 72px)" fill="#E8D5A3"
+      filter="url(#title-glow)" id="title-text">BLIP DRIFT</text>
+
+    <!-- Option B: Blip Silhouette at 52% from top, scale 2.0x -->
+    <g id="blip-svg-group" transform="translate(0, 0)">
+      <ellipse rx="28" ry="24" fill="#E8D5A3"/>
+      <rect x="-66" y="-5" width="32" height="8" fill="#4A9ECD"/>
+      <rect x="34" y="-5" width="32" height="8" fill="#4A9ECD"/>
+      <line x1="0" y1="-24" x2="0" y2="-50" stroke="#E8D5A3" stroke-width="2"/>
+      <circle cx="0" cy="-50" r="4" fill="#FF8C42" filter="url(#antenna-glow)"/>
+      <circle cx="10" cy="4" r="8" fill="#1E3A5F" stroke="#FF8C42" stroke-width="2" filter="url(#eye-glow)"/>
+      <circle cx="10" cy="4" r="3" fill="#FF8C42"/>
+    </g>
+
+    <!-- Subtitle -->
+    <text x="50%" y="42%" text-anchor="middle"
+      font-family="'Courier New', Courier, monospace" font-size="13"
+      fill="#4A9ECD" letter-spacing="0.22em">PROBE UNIT 9 — AWAKE AFTER 40 YEARS</text>
+
+    <!-- Start button at 72% from top -->
+    <g id="start-btn" transform="translate(0, 0)">
+      <rect x="-100" y="-18" width="200" height="36"
+        fill="transparent" stroke="#E8D5A3" stroke-width="1" rx="3">
+        <animate attributeName="stroke-opacity" values="0.35;1.0;0.35" dur="1.8s"
+          calcMode="spline" keySplines="0.42 0 0.58 1;0.42 0 0.58 1"
+          repeatCount="indefinite"/>
+      </rect>
+      <text text-anchor="middle" dominant-baseline="middle"
+        font-family="'Courier New', Courier, monospace" font-size="13"
+        fill="#E8D5A3" letter-spacing="0.12em">HOLD TO DRIFT</text>
+    </g>
+  </svg>
+</div>
+
+<div id="instructions">
+  <h2>HOW TO DRIFT</h2>
+  <p>HOLD LEFT HALF OF SCREEN — left thruster (+X lateral force)</p>
+  <p>HOLD RIGHT HALF OF SCREEN — right thruster (−X lateral force)</p>
+  <p>RELEASE — Blip coasts on inertia, drifting almost forever</p>
+  <p>BOTH SIDES HELD — thrusters balance, velocity unchanged</p>
+  <p style="color:#FF8C42;margin-top:clamp(8px,1.5vh,16px);">Gravity pulls Blip toward asteroids — read the field ahead.</p>
+  <p style="color:#FF8C42;">3 lives. Lose all: zone restarts, lives restored.</p>
+  <div class="tap-continue">TAP ANYWHERE TO BEGIN</div>
+</div>
+
+<div id="win-screen">
+  <h1>MESSAGE SENT</h1>
+  <p>Blip has transmitted after 40 years of silence.</p>
+  <p>She was never afraid. She just wanted to send the message.</p>
+  <div class="score" id="final-score"></div>
+  <p style="color:#4A9ECD;font-size:clamp(11px,1.8vw,14px);letter-spacing:0.2em;margin-top:clamp(10px,2vh,20px);">TAP TO PLAY AGAIN</p>
+</div>
+
+<div id="death-screen">
+  <h1>SIGNAL LOST</h1>
+  <p>RETURNING TO ZONE</p>
+  <p style="color:#4A9ECD;font-size:clamp(11px,1.8vw,14px);letter-spacing:0.2em;margin-top:clamp(15px,3vh,30px);">TAP TO CONTINUE</p>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// ─── SEEDED RNG ───────────────────────────────────────────────────────────────
+function makeRng(seed) {
+  let s = (seed ^ 0xDEADBEEF) >>> 0;
+  return function() {
+    s = Math.imul(s ^ (s >>> 16), 0x45d9f3b);
+    s = Math.imul(s ^ (s >>> 16), 0x45d9f3b);
+    s = (s ^ (s >>> 16)) >>> 0;
+    return s / 0xFFFFFFFF;
+  };
+}
+
+// Pre-generate star positions (shared between start screen and game)
+const STAR_RNG = makeRng(42);
+const STARS = Array.from({ length: 80 }, () => ({
+  x: STAR_RNG(),
+  y: STAR_RNG(),
+  r: 0.5 + STAR_RNG() * 0.5,
+  a: 0.3 + STAR_RNG() * 0.6
+}));
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let gameState = 'start'; // start | instructions | playing | dead-zone | win
+
+// ─── SVG LAYOUT (position elements after DOM ready) ──────────────────────────
+function layoutSVG() {
+  const w = window.innerWidth, h = window.innerHeight;
+  const br = document.getElementById('border-rect');
+  if (br) { br.setAttribute('width', w - 24); br.setAttribute('height', h - 24); }
+  const blipG = document.getElementById('blip-svg-group');
+  if (blipG) blipG.setAttribute('transform', `translate(${w/2}, ${h * 0.52})`);
+  const btnG = document.getElementById('start-btn');
+  if (btnG) btnG.setAttribute('transform', `translate(${w/2}, ${h * 0.72})`);
+}
+layoutSVG();
+window.addEventListener('resize', layoutSVG);
+
+// ─── THREE.JS START SCREEN ───────────────────────────────────────────────────
+const threeCanvas = document.getElementById('three-canvas');
+const W = () => window.innerWidth;
+const H = () => window.innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(W(), H());
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1E3A5F);
+
+const camera = new THREE.OrthographicCamera(-W()/2, W()/2, H()/2, -H()/2, 0.1, 100);
+camera.position.z = 10;
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(W(), H()), 0.8, 0.4, 0.6);
+composer.addPass(bloomPass);
+
+// Stars
+{
+  const geo = new THREE.BufferGeometry();
+  const pos = [], col = [];
+  const srng = makeRng(42);
+  for (let i = 0; i < 80; i++) {
+    pos.push((srng() - 0.5) * W(), (srng() - 0.5) * H(), 0);
+    const b = 0.3 + srng() * 0.6;
+    col.push(b, b, b);
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 2, vertexColors: true, sizeAttenuation: false })));
+}
+
+// Blip (start screen)
+const blipG3 = new THREE.Group();
+scene.add(blipG3);
+blipG3.position.set(W() * 0.3, H() * 0.1, 0);
+
+const bodyMesh = new THREE.Mesh(new THREE.CircleGeometry(18, 32), new THREE.MeshBasicMaterial({ color: 0xE8D5A3 }));
+blipG3.add(bodyMesh);
+
+const panelMat3 = new THREE.MeshBasicMaterial({ color: 0x4A9ECD, transparent: true, opacity: 1.0 });
+const lPanel = new THREE.Mesh(new THREE.PlaneGeometry(28, 8), panelMat3);
+lPanel.position.set(-31, 0, 0.1);
+blipG3.add(lPanel);
+const rPanel = new THREE.Mesh(new THREE.PlaneGeometry(28, 8), panelMat3);
+rPanel.position.set(31, 0, 0.1);
+blipG3.add(rPanel);
+
+const antennaMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 26), new THREE.MeshBasicMaterial({ color: 0xE8D5A3 }));
+antennaMesh.position.set(0, 31, 0.1);
+blipG3.add(antennaMesh);
+
+const antennaTip = new THREE.Mesh(new THREE.CircleGeometry(4, 16), new THREE.MeshBasicMaterial({ color: 0xFF8C42 }));
+antennaTip.position.set(0, 44, 0.2);
+blipG3.add(antennaTip);
+
+const eyeOuterMat = new THREE.MeshBasicMaterial({ color: 0x1E3A5F });
+const eyeOuter = new THREE.Mesh(new THREE.CircleGeometry(8, 32), eyeOuterMat);
+eyeOuter.position.set(10, -4, 0.2);
+blipG3.add(eyeOuter);
+
+const eyeInner = new THREE.Mesh(new THREE.CircleGeometry(4, 16), new THREE.MeshBasicMaterial({ color: 0xFF8C42 }));
+eyeInner.position.set(10, -4, 0.3);
+blipG3.add(eyeInner);
+
+// Camera eye glow (bloom)
+const eyeGlowMat = new THREE.MeshBasicMaterial({ color: 0xFF8C42, transparent: true, opacity: 0.9 });
+const eyeGlow = new THREE.Mesh(new THREE.CircleGeometry(10, 32), eyeGlowMat);
+eyeGlow.position.set(10, -4, 0.1);
+blipG3.add(eyeGlow);
+
+// Thruster glow (bloom)
+const thrusterGlowMat = new THREE.MeshBasicMaterial({ color: 0xFF8C42, transparent: true, opacity: 0.6 });
+const thrusterGlow3 = new THREE.Mesh(new THREE.PlaneGeometry(24, 8), thrusterGlowMat);
+thrusterGlow3.position.set(12, -22, -0.1);
+blipG3.add(thrusterGlow3);
+
+// Large asteroid
+const largeAst = new THREE.Mesh(
+  new THREE.CircleGeometry(55, 12),
+  new THREE.MeshBasicMaterial({ color: 0x8A7A6A })
+);
+largeAst.position.set(-W() * 0.2, H() * 0.1, -1);
+scene.add(largeAst);
+
+// Small asteroid
+const smallAst = new THREE.Mesh(
+  new THREE.CircleGeometry(22, 10),
+  new THREE.MeshBasicMaterial({ color: 0x7A6E62 })
+);
+smallAst.position.set(W() * 0.2, -H() * 0.15, -1);
+scene.add(smallAst);
+
+// Signal tower (Three.js, start screen)
+const towerG3 = new THREE.Group();
+towerG3.position.set(W() * 0.35, H() * 0.35, 0);
+scene.add(towerG3);
+const towerBarMat = new THREE.MeshBasicMaterial({ color: 0xE8D5A3, transparent: true, opacity: 0.5 });
+towerG3.add(Object.assign(new THREE.Mesh(new THREE.PlaneGeometry(2, 60), towerBarMat)));
+const towerTopBar = new THREE.Mesh(new THREE.PlaneGeometry(20, 2), towerBarMat);
+towerTopBar.position.set(0, 31, 0);
+towerG3.add(towerTopBar);
+const towerLightMat = new THREE.MeshBasicMaterial({ color: 0xFF8C42, transparent: true, opacity: 0 });
+const towerLight3 = new THREE.Mesh(new THREE.CircleGeometry(4, 16), towerLightMat);
+towerLight3.position.set(0, 35, 0.1);
+towerG3.add(towerLight3);
+const towerGlowMat = new THREE.MeshBasicMaterial({ color: 0xFF8C42, transparent: true, opacity: 0 });
+const towerGlow3 = new THREE.Mesh(new THREE.CircleGeometry(12, 16), towerGlowMat);
+towerGlow3.position.set(0, 35, -0.1);
+towerG3.add(towerGlow3);
+
+// Start screen animation
+let blipX3 = W() * 0.3;
+let largeAstRot = 0, smallAstRot = 0;
+let towerBlinkT = 0, towerOn3 = false;
+let prevStartT = performance.now();
+
+function animateStart(now) {
+  if (gameState !== 'start') return;
+  requestAnimationFrame(animateStart);
+  const dt = Math.min((now - prevStartT) / 1000, 0.05);
+  prevStartT = now;
+  const scale = dt * 60;
+
+  blipX3 -= 0.4 * scale;
+  if (blipX3 < -W() * 0.6) blipX3 = W() * 0.6;
+  blipG3.position.x = blipX3;
+
+  // Solar panel shimmer
+  const panOp = 0.7 + 0.3 * Math.sin(now * 0.001 * Math.PI * 2 / 4.0);
+  panelMat3.opacity = panOp;
+
+  // Eye pulse
+  const eyeR = 6 + 4 * Math.sin(now * 0.001 * Math.PI * 2 / 2.5);
+  eyeGlow.scale.setScalar(eyeR / 10);
+
+  // Thruster flicker
+  thrusterGlowMat.opacity = 0.4 + 0.2 * Math.sin(now * 0.002 * Math.PI);
+
+  // Asteroids
+  largeAstRot += 0.28 * scale * Math.PI / 180;
+  smallAstRot -= 1.1 * scale * Math.PI / 180;
+  largeAst.rotation.z = largeAstRot;
+  smallAst.rotation.z = smallAstRot;
+  largeAst.position.x += 0.2 * scale;
+  smallAst.position.x += 0.15 * scale;
+  smallAst.position.y += 0.1 * scale;
+  if (largeAst.position.x > W() * 0.7) largeAst.position.x = -W() * 0.7;
+  if (smallAst.position.x > W() * 0.7) { smallAst.position.x = -W() * 0.7; }
+  if (smallAst.position.y > H() * 0.7) { smallAst.position.y = -H() * 0.7; }
+
+  // Tower blink
+  towerBlinkT += dt;
+  if (!towerOn3 && towerBlinkT >= 3.05) { towerOn3 = true; towerBlinkT = 0; }
+  else if (towerOn3 && towerBlinkT >= 0.15) { towerOn3 = false; towerBlinkT = 0; }
+  towerLightMat.opacity = towerOn3 ? 1.0 : 0;
+  towerGlowMat.opacity = towerOn3 ? 0.3 : 0;
+
+  composer.render();
+}
+requestAnimationFrame(animateStart);
+
+window.addEventListener('resize', () => {
+  const w = W(), h = H();
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+  camera.left = -w/2; camera.right = w/2;
+  camera.top = h/2; camera.bottom = -h/2;
+  camera.updateProjectionMatrix();
+  if (gameState === 'playing') resizeGameCanvas();
+});
+
+// ─── AUDIO ────────────────────────────────────────────────────────────────────
+let audioReady = false;
+let bassOsc, padSynth, musicBox, arpSynth, dangerSynth;
+let thrusterL, thrusterR, gravWhine;
+let gravWhineActive = false;
+let dangerActive = false;
+let towerPingTimer = 0;
+
+async function initAudio() {
+  if (audioReady) return;
+  await Tone.start();
+
+  // 1. Bass drone: C2
+  bassOsc = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 3.0, decay: 0.1, sustain: 1.0, release: 4.0 }
+  }).toDestination();
+  bassOsc.volume.value = -18;
+
+  // 2. Pad: PolySynth triangle + reverb
+  const padRev = new Tone.Reverb({ decay: 4.0, wet: 0.9 }).toDestination();
+  padSynth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.8, decay: 0.1, sustain: 1.0, release: 2.0 }
+  }).connect(padRev);
+  padSynth.volume.value = -16;
+
+  // 3. Music box: PluckSynth
+  musicBox = new Tone.PluckSynth({
+    attackNoise: 0.1,
+    dampening: 3000,
+    resonance: 0.98
+  }).toDestination();
+  musicBox.volume.value = -10;
+
+  // 4. Arpeggio: sawtooth
+  arpSynth = new Tone.Synth({
+    oscillator: { type: 'sawtooth' },
+    envelope: { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.1 }
+  }).toDestination();
+  arpSynth.volume.value = -40;
+
+  // 5. Danger pulse: square at Bb2
+  dangerSynth = new Tone.Synth({
+    oscillator: { type: 'square' },
+    envelope: { attack: 0.1, decay: 0.1, sustain: 1.0, release: 0.3 }
+  }).toDestination();
+  dangerSynth.volume.value = -40;
+
+  // Thruster noise (L and R)
+  thrusterL = new Tone.NoiseSynth({
+    noise: { type: 'white' },
+    envelope: { attack: 0.05, decay: 0.0, sustain: 1.0, release: 0.15 }
+  }).toDestination();
+  thrusterL.volume.value = -12;
+
+  thrusterR = new Tone.NoiseSynth({
+    noise: { type: 'white' },
+    envelope: { attack: 0.05, decay: 0.0, sustain: 1.0, release: 0.15 }
+  }).toDestination();
+  thrusterR.volume.value = -12;
+
+  // Gravity whine: sine
+  gravWhine = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.2, decay: 0.0, sustain: 1.0, release: 0.4 }
+  }).toDestination();
+  gravWhine.volume.value = -30;
+
+  audioReady = true;
+}
+
+function startGameAudio() {
+  if (!audioReady) return;
+  Tone.Transport.stop();
+  Tone.Transport.cancel();
+  Tone.Transport.bpm.value = 72;
+
+  bassOsc.triggerAttack('C2');
+
+  const chords = [
+    ['C4','E4','G4'],
+    ['A3','C4','E4'],
+    ['F3','A3','C4'],
+    ['G3','B3','D4']
+  ];
+  let chordIdx = 0;
+  // Pad: trigger every 4 measures (1m = 4 beats at 72bpm = 3.333s)
+  Tone.Transport.scheduleRepeat((time) => {
+    padSynth.releaseAll(time);
+    padSynth.triggerAttack(chords[chordIdx % 4], time);
+    chordIdx++;
+  }, '4m');
+
+  // Music box hook every 8 bars = 8 measures
+  const hookNotes = ['C5','A4','G4','E4','D4'];
+  Tone.Transport.scheduleRepeat((time) => {
+    hookNotes.forEach((n, i) => {
+      musicBox.triggerAttackRelease(n, '8n', time + i * 0.3);
+    });
+  }, '8m', '4m');
+
+  // Arpeggio (active from level 2)
+  const arpNotes = ['C3','E3','G3','B3','C4'];
+  let arpIdx = 0;
+  Tone.Transport.scheduleRepeat((time) => {
+    if (currentLevel >= 1 && arpSynth.volume.value > -38) {
+      arpSynth.triggerAttackRelease(arpNotes[arpIdx % arpNotes.length], '16n', time);
+      arpIdx++;
+    }
+  }, '16n');
+
+  Tone.Transport.start();
+}
+
+function playThrusterL(on) {
+  if (!audioReady || !thrusterL) return;
+  try { if (on) thrusterL.triggerAttack(); else thrusterL.triggerRelease(); } catch(e) {}
+}
+function playThrusterR(on) {
+  if (!audioReady || !thrusterR) return;
+  try { if (on) thrusterR.triggerAttack(); else thrusterR.triggerRelease(); } catch(e) {}
+}
+
+function playCollision() {
+  if (!audioReady) return;
+  const hit = new Tone.FMSynth({
+    harmonicity: 3.1,
+    modulationIndex: 12,
+    envelope: { attack: 0.001, decay: 1.0, sustain: 0, release: 0.1 },
+    modulationEnvelope: { attack: 0.001, decay: 1.0, sustain: 0, release: 0.1 }
+  }).toDestination();
+  hit.volume.value = -6;
+  hit.triggerAttackRelease(60, 1.0);
+  setTimeout(() => { try { hit.dispose(); } catch(e){} }, 2500);
+  // Cut pad/arp
+  if (padSynth) padSynth.releaseAll();
+  if (dangerSynth) { try { dangerSynth.triggerRelease(); } catch(e) {} }
+  dangerActive = false;
+  // Bass bends down
+  if (bassOsc) bassOsc.frequency.rampTo('B1', 0.5);
+}
+
+function restoreAfterDeath() {
+  if (!audioReady) return;
+  if (bassOsc) bassOsc.frequency.rampTo('C2', 0.5);
+  // Restart pad
+  if (padSynth) padSynth.triggerAttack(['C4','E4','G4']);
+}
+
+function playZoneClear() {
+  if (!audioReady) return;
+  const rev = new Tone.Reverb({ decay: 2.0, wet: 0.8 }).toDestination();
+  const p = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.05, decay: 1.5, sustain: 0.2, release: 1.2 }
+  }).connect(rev);
+  p.volume.value = -6;
+  p.triggerAttackRelease(['C4','E4','G4','C5'], 1.5);
+  setTimeout(() => { try { p.dispose(); rev.dispose(); } catch(e){} }, 5000);
+  if (musicBox) {
+    const hookNotes = ['C5','A4','G4','E4','D4'];
+    hookNotes.forEach((n, i) => {
+      musicBox.triggerAttackRelease(n, 0.15, Tone.now() + i * 0.15);
+    });
+    hookNotes.forEach((n, i) => {
+      musicBox.triggerAttackRelease(n, 0.15, Tone.now() + hookNotes.length * 0.15 + i * 0.15);
+    });
+  }
+}
+
+function playWakeUp() {
+  if (!audioReady) return;
+  const notes = ['C3','E3','G3','C4'];
+  const s = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.05, decay: 0.2, sustain: 0.8, release: 0.3 }
+  }).toDestination();
+  s.volume.value = -6;
+  notes.forEach((n, i) => s.triggerAttackRelease(n, 0.25, Tone.now() + i * 0.3));
+  if (musicBox) musicBox.triggerAttackRelease('C5', 0.8, Tone.now() + notes.length * 0.3);
+  setTimeout(() => { try { s.dispose(); } catch(e){} }, 4000);
+}
+
+function playWin() {
+  if (!audioReady) return;
+  const hookNotes = ['C5','A4','G4','E4','D4'];
+  hookNotes.forEach((n, i) => {
+    if (musicBox) musicBox.triggerAttackRelease(n, 0.6, Tone.now() + i * 0.6);
+  });
+  if (padSynth) padSynth.volume.rampTo(-6, 2.0);
+  const noisy = new Tone.NoiseSynth({
+    noise: { type: 'white' },
+    envelope: { attack: 0.01, decay: 0.3, sustain: 0, release: 0 }
+  }).toDestination();
+  noisy.volume.value = -10;
+  noisy.triggerAttackRelease('16n');
+  setTimeout(() => { try { noisy.dispose(); } catch(e){} }, 1000);
+  const finalRev = new Tone.Reverb({ wet: 1.0 }).toDestination();
+  const finalTone = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 1.0, decay: 4.0, sustain: 0, release: 0.1 }
+  }).connect(finalRev);
+  finalTone.volume.value = -18;
+  finalTone.triggerAttackRelease('C6', 5.0, Tone.now() + 3.0);
+  setTimeout(() => { try { finalTone.dispose(); finalRev.dispose(); } catch(e){} }, 12000);
+}
+
+function playTowerPing() {
+  if (!audioReady) return;
+  const p = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0 }
+  }).toDestination();
+  p.volume.value = -14;
+  p.triggerAttackRelease(880, 0.4);
+  setTimeout(() => { try { p.dispose(); } catch(e){} }, 1500);
+}
+
+function playNearMiss() {
+  if (!audioReady) return;
+  const p = new Tone.Synth({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0, decay: 0.4, sustain: 0, release: 0 }
+  }).toDestination();
+  p.volume.value = -8;
+  p.triggerAttackRelease(55, 0.4);
+  setTimeout(() => { try { p.dispose(); } catch(e){} }, 1500);
+}
+
+function updateGravWhine(pullStrength) {
+  if (!audioReady || !gravWhine) return;
+  if (pullStrength > 0.15) {
+    const t = (pullStrength - 0.15) / 0.15;
+    const freq = 60 + t * 120;
+    const vol = -18 + t * 12;
+    try {
+      gravWhine.frequency.value = Math.max(60, Math.min(180, freq));
+      gravWhine.volume.value = Math.max(-18, Math.min(-6, vol));
+      if (!gravWhineActive) { gravWhine.triggerAttack(gravWhine.frequency.value); gravWhineActive = true; }
+    } catch(e) {}
+  } else if (gravWhineActive) {
+    try { gravWhine.triggerRelease(); } catch(e) {}
+    gravWhineActive = false;
+  }
+}
+
+function setDangerState(active) {
+  if (!audioReady) return;
+  if (active && !dangerActive) {
+    dangerActive = true;
+    if (padSynth) padSynth.volume.rampTo(-22, 0.3);
+    if (dangerSynth) { dangerSynth.volume.value = -8; try { dangerSynth.triggerAttack('Bb2'); } catch(e){} }
+  } else if (!active && dangerActive) {
+    dangerActive = false;
+    if (padSynth) padSynth.volume.rampTo(-16, 0.5);
+    if (dangerSynth) { try { dangerSynth.triggerRelease(); } catch(e){} }
+  }
+}
+
+// ─── GAME CANVASES ────────────────────────────────────────────────────────────
+const gameCanvas = document.getElementById('game-canvas');
+const gCtx = gameCanvas.getContext('2d');
+const hudCanvas = document.getElementById('hud-canvas');
+const hCtx = hudCanvas.getContext('2d');
+
+function resizeGameCanvas() {
+  gameCanvas.width = window.innerWidth;
+  gameCanvas.height = window.innerHeight;
+  hudCanvas.width = window.innerWidth;
+  hudCanvas.height = window.innerHeight;
+}
+
+// ─── LEVEL DEFINITIONS ────────────────────────────────────────────────────────
+const LEVELS = [
+  { name:'SPARSE DRIFT',   nextZone:'ROCKY BELT AHEAD',      forwardSpeed:1.2, asteroidCount:8,  minGap:120, gravMult:0.5, radMin:20, radMax:35, totalDist:6000,  emptyZone:720, softTimeLim:45, hasOrbiting:false, hasElliptical:false, hasAnchors:false },
+  { name:'ROCKY BELT',     nextZone:'DENSE FIELD AHEAD',     forwardSpeed:1.5, asteroidCount:15, minGap:90,  gravMult:0.7, radMin:20, radMax:45, totalDist:9000,  emptyZone:0,   softTimeLim:60, hasOrbiting:true,  hasElliptical:false, hasAnchors:false },
+  { name:'DENSE FIELD',    nextZone:'GRAVITY MAZE AHEAD',    forwardSpeed:1.9, asteroidCount:25, minGap:65,  gravMult:1.0, radMin:20, radMax:55, totalDist:12000, emptyZone:0,   softTimeLim:75, hasOrbiting:false, hasElliptical:true,  hasAnchors:false },
+  { name:'GRAVITY MAZE',   nextZone:'SIGNAL APPROACH AHEAD', forwardSpeed:2.2, asteroidCount:18, minGap:80,  gravMult:1.5, radMin:20, radMax:45, totalDist:14000, emptyZone:0,   softTimeLim:90, hasOrbiting:false, hasElliptical:false, hasAnchors:true  },
+  { name:'SIGNAL APPROACH',nextZone:'',                      forwardSpeed:2.0, asteroidCount:12, minGap:100, gravMult:0.8, radMin:20, radMax:40, totalDist:10000, emptyZone:0,   softTimeLim:75, hasOrbiting:false, hasElliptical:false, hasAnchors:false }
+];
+
+// ─── GAME STATE VARIABLES ─────────────────────────────────────────────────────
+let currentLevel = 0;
+let lives = 3;
+let score = 0;
+let worldY = 0;          // world Y scrolled (increases as Blip moves forward)
+let blipWorldX = 0;      // Blip's lateral world position (0 = center)
+let blipVX = 0;          // lateral velocity
+let blipVY = 1.2;        // forward speed (forward = world-y increases)
+let invincTimer = 0;
+let thrustLeft = false, thrustRight = false;
+let asteroids = [];
+let orbitPairs = [];
+let signalTower = null;
+let deadState = false;
+let deadTimer = 0;
+let levelStartTime = 0;
+let zoneTransitioning = false;
+let nearMissSet = new Set();
+let lastFrameT = 0;
+
+// ─── ASTEROID GENERATION ──────────────────────────────────────────────────────
+function astColor(rng) {
+  const v = Math.floor((rng() - 0.5) * 30);
+  const r = Math.max(0, Math.min(255, 138 + v));
+  const g = Math.max(0, Math.min(255, 122 + v));
+  const b = Math.max(0, Math.min(255, 106 + v));
+  return `rgb(${r},${g},${b})`;
+}
+
+function generateLevel(idx) {
+  const lvl = LEVELS[idx];
+  const rng = makeRng(idx + 1);
+  const sw = window.innerWidth;
+  asteroids = [];
+  orbitPairs = [];
+
+  // Anchor asteroids (Level 4)
+  if (lvl.hasAnchors) {
+    const anchorDefs = [
+      { x: -sw * 0.22, y: 2500 },
+      { x:  sw * 0.22, y: 5500 },
+      { x: -sw * 0.22, y: 8500 },
+      { x:  sw * 0.22, y: 11500 }
+    ];
+    for (const a of anchorDefs) {
+      asteroids.push({
+        x: a.x, y: a.y, r: 60,
+        isAnchor: true, gravMult: 3.0,
+        color: '#8A7A6A', rot: 0, rotSpeed: 0,
+        driftPeriod: 0, driftAmpPx: 0, driftPhase: 0, isElliptical: false
+      });
+    }
+  }
+
+  const emptyY = lvl.emptyZone || 0;
+  const usable = lvl.totalDist - emptyY - 600;
+  const spacing = usable / lvl.asteroidCount;
+  let orbitCount = 0;
+
+  for (let i = 0; i < lvl.asteroidCount; i++) {
+    const yBase = emptyY + spacing * i + spacing * (0.1 + rng() * 0.7);
+    const xRange = sw * 0.38;
+    const x = (rng() - 0.5) * 2 * xRange;
+    const r = lvl.radMin + rng() * (lvl.radMax - lvl.radMin);
+    const color = astColor(rng);
+
+    // Orbiting pairs for Level 2
+    if (lvl.hasOrbiting && orbitCount < 3 && i % 5 === 0) {
+      orbitPairs.push({
+        cx: x, cy: yBase,
+        orbitRadius: 80,
+        angle: rng() * Math.PI * 2,
+        angularSpeed: (Math.PI * 2) / 6, // rad/sec; 6-second period
+        r1: lvl.radMin + rng() * (lvl.radMax - lvl.radMin) * 0.5,
+        r2: lvl.radMin + rng() * (lvl.radMax - lvl.radMin) * 0.5,
+        color: color
+      });
+      orbitCount++;
+      continue;
+    }
+
+    // Elliptical asteroids (Level 3): ~1 per 8
+    const isEll = lvl.hasElliptical && (i % 8 === 0);
+
+    const driftPeriod = 8 + rng() * 6; // seconds
+    // driftAmp in px: max velocity 0.3 px/frame @ 60fps = 18px/s = amp * (2π/period)
+    // amp = 18 * period / (2π)
+    const driftAmpPx = 18 * driftPeriod / (2 * Math.PI);
+    asteroids.push({
+      x, y: yBase, baseX: x, r,
+      isAnchor: false, gravMult: lvl.gravMult,
+      color,
+      rot: rng() * Math.PI * 2,
+      rotSpeed: (rng() - 0.5) * 0.03,
+      driftPhase: rng() * Math.PI * 2,
+      driftPeriod: driftPeriod,
+      driftAmpPx: driftAmpPx,
+      isElliptical: isEll,
+      ellipseA: isEll ? 55 : r,
+      ellipseB: isEll ? 28 : r
+    });
+  }
+
+  // Signal tower for Level 5
+  signalTower = idx === 4 ? {
+    x: 0,
+    y: lvl.totalDist - 400,
+    blinkTimer: 3.05,
+    blinkOn: false
+  } : null;
+}
+
+function initLevel(idx) {
+  currentLevel = idx;
+  worldY = 0;
+  blipWorldX = 0;
+  blipVX = 0;
+  blipVY = LEVELS[idx].forwardSpeed;
+  invincTimer = 0;
+  deadState = false;
+  zoneTransitioning = false;
+  nearMissSet.clear();
+  levelStartTime = performance.now() / 1000;
+  towerPingTimer = 3.2;
+  generateLevel(idx);
+}
+
+// ─── GAME START ───────────────────────────────────────────────────────────────
+function startGame() {
+  gameState = 'playing';
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('instructions').style.display = 'none';
+  document.getElementById('three-canvas').style.display = 'none';
+  document.getElementById('game-canvas').style.display = 'block';
+  document.getElementById('hud-canvas').style.display = 'block';
+  resizeGameCanvas();
+  lives = 3;
+  score = 0;
+  currentLevel = 0;
+  initLevel(0);
+  lastFrameT = performance.now();
+  playWakeUp();
+  initAudio().then(() => startGameAudio()).catch(() => {});
+  requestAnimationFrame(gameLoop);
+}
+
+// ─── SAT ELLIPSE–CIRCLE COLLISION ────────────────────────────────────────────
+function ellipseCircleCollide(ex, ey, ea, eb, erot, cx, cy, cr) {
+  // Transform circle into ellipse local space
+  const cos = Math.cos(-erot), sin = Math.sin(-erot);
+  const lx = cos * (cx - ex) - sin * (cy - ey);
+  const ly = sin * (cx - ex) + cos * (cy - ey);
+  // Closest point on ellipse boundary
+  const d = Math.sqrt((lx/ea)**2 + (ly/eb)**2);
+  if (d === 0) return true;
+  const clx = (lx / d) * ea;
+  const cly = (ly / d) * eb;
+  return Math.sqrt((lx - clx)**2 + (ly - cly)**2) < cr;
+}
+
+// ─── MAIN GAME LOOP ───────────────────────────────────────────────────────────
+function gameLoop(now) {
+  if (gameState !== 'playing') return;
+  requestAnimationFrame(gameLoop);
+
+  const dt = Math.min((now - lastFrameT) / 1000, 0.05);
+  lastFrameT = now;
+  const f = dt * 60; // 60fps normalization factor
+
+  const lvl = LEVELS[currentLevel];
+  const sw = window.innerWidth, sh = window.innerHeight;
+  const blipSY = sh * 0.35; // Blip fixed screen Y
+
+  // ── Dead state: wait for respawn timer ──
+  if (deadState) {
+    deadTimer -= dt;
+    if (deadTimer <= 0) {
+      deadState = false;
+      invincTimer = 2.0;
+      restoreAfterDeath();
+    }
+    drawGame(now, blipSY);
+    drawHUD();
+    return;
+  }
+
+  // ── Thrust ──
+  if (thrustLeft)  blipVX += 0.08 * f;
+  if (thrustRight) blipVX -= 0.08 * f;
+
+  // Lateral drag (very low — vacuum)
+  if (blipVX > 0) blipVX = Math.max(0, blipVX - 0.002 * f);
+  else if (blipVX < 0) blipVX = Math.min(0, blipVX + 0.002 * f);
+
+  // Lateral cap
+  blipVX = Math.max(-4.0, Math.min(4.0, blipVX));
+
+  // Forward speed (not adjustable)
+  blipVY = lvl.forwardSpeed;
+
+  // ── Gravity from asteroids ──
+  const bwx = blipWorldX;
+  const bwy = worldY + blipSY; // Blip's world Y = worldY + screen offset
+
+  // Collect all bodies including orbiting pair members
+  const bodies = [...asteroids];
+  for (const pair of orbitPairs) {
+    const ax = pair.cx + Math.cos(pair.angle) * pair.orbitRadius;
+    const ay = pair.cy + Math.sin(pair.angle) * pair.orbitRadius;
+    bodies.push({ x: ax, y: ay, r: pair.r1, gravMult: lvl.gravMult, color: pair.color, isAnchor: false, isElliptical: false, rot: 0 });
+    bodies.push({ x: pair.cx - (ax-pair.cx), y: pair.cy - (ay-pair.cy), r: pair.r2, gravMult: lvl.gravMult, color: pair.color, isAnchor: false, isElliptical: false, rot: 0 });
+  }
+
+  let maxPull = 0;
+  let closestDist = Infinity;
+  for (const ast of bodies) {
+    const dx = ast.x - bwx;
+    const dy = ast.y - bwy;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < closestDist) closestDist = dist;
+    if (dist < 180 && dist > 0) {
+      const gm = ast.isAnchor ? ast.gravMult : lvl.gravMult;
+      const force = Math.min(0.30, (gm * 0.04) / (dist * dist));
+      blipVX += (dx / dist) * force * f;
+      // Forward gravity effect (small)
+      blipVY += (dy / dist) * force * f * 0.3;
+      if (force > maxPull) maxPull = force;
+    }
+  }
+
+  // Tower gravity (Level 5)
+  if (currentLevel === 4 && signalTower) {
+    const dx = signalTower.x - bwx;
+    const dy = signalTower.y - bwy;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < 800 && dist > 0) {
+      const tforce = Math.min(0.30, (1.5 * 0.04) / (dist*dist));
+      blipVX += (dx/dist) * tforce * f;
+    }
+    towerPingTimer -= dt;
+    if (towerPingTimer <= 0) { playTowerPing(); towerPingTimer = 3.2; }
+    signalTower.blinkTimer -= dt;
+    if (signalTower.blinkTimer <= 0) {
+      signalTower.blinkOn = !signalTower.blinkOn;
+      signalTower.blinkTimer = signalTower.blinkOn ? 0.15 : 3.05;
+    }
+    // Win condition
+    if (dist < 30) { triggerWin(); return; }
+  }
+
+  blipVY = Math.max(0.5, Math.min(lvl.forwardSpeed * 1.5, blipVY));
+
+  // Gravity whine + danger state
+  updateGravWhine(maxPull);
+  setDangerState(closestDist < 80);
+
+  // ── Move Blip ──
+  blipWorldX += blipVX * f;
+  worldY += blipVY * f;
+
+  // Clamp lateral to screen
+  blipWorldX = Math.max(-sw/2 + 22, Math.min(sw/2 - 22, blipWorldX));
+
+  // ── Invincibility countdown ──
+  if (invincTimer > 0) invincTimer -= dt;
+
+  // ── Update asteroid drift & rotation ──
+  for (const ast of asteroids) {
+    if (!ast.isAnchor) {
+      ast.rot += ast.rotSpeed * f;
+      if (ast.driftPeriod > 0) {
+        ast.driftPhase += (2 * Math.PI / ast.driftPeriod) * dt;
+        ast.x = ast.baseX + Math.sin(ast.driftPhase) * ast.driftAmpPx;
+      }
+    }
+  }
+  // Update orbit pairs
+  for (const pair of orbitPairs) {
+    pair.angle += pair.angularSpeed * dt;
+  }
+
+  // ── Score ──
+  score += blipVY * f / 100;
+
+  // ── Collision detection ──
+  if (invincTimer <= 0) {
+    const bwx2 = blipWorldX;
+    const bwy2 = worldY + blipSY;
+    for (const ast of bodies) {
+      const dx = ast.x - bwx2;
+      const dy = ast.y - bwy2;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      let hit = false;
+      if (ast.isElliptical) {
+        hit = ellipseCircleCollide(ast.x, ast.y, ast.ellipseA, ast.ellipseB, ast.rot, bwx2, bwy2, 18);
+      } else {
+        hit = dist < (ast.r + 18);
+      }
+      if (hit) { triggerDeath(); return; }
+    }
+  }
+
+  // ── Near miss ──
+  {
+    const bwx2 = blipWorldX;
+    const bwy2 = worldY + blipSY;
+    for (const ast of bodies) {
+      const dx = ast.x - bwx2;
+      const dy = ast.y - bwy2;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const key = `${ast.x.toFixed(0)}_${ast.y.toFixed(0)}`;
+      if (dist < 90 && dist > ast.r + 18) {
+        if (!nearMissSet.has(key)) { nearMissSet.add(key); playNearMiss(); }
+      } else {
+        nearMissSet.delete(key);
+      }
+    }
+  }
+
+  // ── Zone complete ──
+  if (!zoneTransitioning && worldY >= lvl.totalDist && currentLevel < 4) {
+    zoneTransitioning = true;
+    const elapsed = performance.now() / 1000 - levelStartTime;
+    const timeBonus = Math.max(0, lvl.softTimeLim - elapsed) * 50;
+    score += 500 + timeBonus;
+    playZoneClear();
+    setTimeout(() => {
+      if (gameState === 'playing') {
+        currentLevel++;
+        initLevel(currentLevel);
+        if (currentLevel >= 1) { if (arpSynth) arpSynth.volume.value = -20; }
+      }
+    }, 1500);
+  }
+
+  // ── Arpeggio volume tied to speed ──
+  if (arpSynth && currentLevel >= 1) {
+    const speedFrac = Math.min(1, Math.abs(blipVX) / 4.0);
+    arpSynth.volume.value = -40 + speedFrac * 34;
+  }
+
+  drawGame(now, blipSY);
+  drawHUD();
+}
+
+// ─── TRIGGER DEATH ────────────────────────────────────────────────────────────
+function triggerDeath() {
+  playCollision();
+  if (gravWhineActive) { try { gravWhine.triggerRelease(); } catch(e){} gravWhineActive = false; }
+  lives--;
+  if (lives <= 0) {
+    lives = 3;
+    gameState = 'dead-zone';
+    document.getElementById('death-screen').style.display = 'flex';
+    return;
+  }
+  deadState = true;
+  deadTimer = 2.0;
+  // Respawn 200px behind (below) in world — move worldY back
+  worldY = Math.max(0, worldY - 200);
+  blipVX = 0;
+  blipVY = LEVELS[currentLevel].forwardSpeed;
+}
+
+// ─── TRIGGER WIN ──────────────────────────────────────────────────────────────
+function triggerWin() {
+  gameState = 'win';
+  playWin();
+  const finalScore = Math.floor(score);
+  document.getElementById('final-score').textContent =
+    `${Math.floor(worldY / 100)} km — SCORE: ${finalScore}`;
+  document.getElementById('win-screen').style.display = 'flex';
+}
+
+// ─── DRAW GAME ────────────────────────────────────────────────────────────────
+function drawGame(now, blipSY) {
+  const sw = window.innerWidth, sh = window.innerHeight;
+  gCtx.clearRect(0, 0, sw, sh);
+
+  // Background
+  gCtx.fillStyle = '#1E3A5F';
+  gCtx.fillRect(0, 0, sw, sh);
+
+  // Stars (static, not world-scrolling)
+  for (const s of STARS) {
+    gCtx.globalAlpha = s.a;
+    gCtx.fillStyle = '#FFFFFF';
+    gCtx.beginPath();
+    gCtx.arc(s.x * sw, s.y * sh, s.r, 0, Math.PI * 2);
+    gCtx.fill();
+  }
+  gCtx.globalAlpha = 1.0;
+
+  // Camera: Blip is at (sw/2, blipSY), world scrolls
+  // World point → screen: sx = sw/2 + (wx - blipWorldX), sy = blipSY + (wy - (worldY + blipSY))
+  function toScreen(wx, wy) {
+    return { x: sw/2 + (wx - blipWorldX), y: blipSY + (wy - worldY - blipSY) };
+  }
+
+  // Compute all asteroid bodies
+  const bodies = [...asteroids];
+  for (const pair of orbitPairs) {
+    const a1x = pair.cx + Math.cos(pair.angle) * pair.orbitRadius;
+    const a1y = pair.cy + Math.sin(pair.angle) * pair.orbitRadius;
+    bodies.push({ x: a1x, y: a1y, r: pair.r1, color: pair.color, isAnchor: false, isElliptical: false, rot: 0 });
+    bodies.push({ x: pair.cx - (a1x-pair.cx), y: pair.cy - (a1y-pair.cy), r: pair.r2, color: pair.color, isAnchor: false, isElliptical: false, rot: 0 });
+  }
+
+  // Draw asteroids
+  for (const ast of bodies) {
+    const sp = toScreen(ast.x, ast.y);
+    if (sp.y < -200 || sp.y > sh + 200 || sp.x < -200 || sp.x > sw + 200) continue;
+    gCtx.save();
+    gCtx.translate(sp.x, sp.y);
+    gCtx.rotate(ast.rot || 0);
+    gCtx.fillStyle = ast.color || '#8A7A6A';
+    gCtx.beginPath();
+    if (ast.isElliptical) {
+      gCtx.ellipse(0, 0, ast.ellipseA, ast.ellipseB, 0, 0, Math.PI * 2);
+    } else {
+      gCtx.arc(0, 0, ast.r, 0, Math.PI * 2);
+    }
+    gCtx.fill();
+    // Anchor highlight
+    if (ast.isAnchor) {
+      gCtx.globalAlpha = 0.3;
+      gCtx.strokeStyle = '#E8D5A3';
+      gCtx.lineWidth = 2;
+      gCtx.stroke();
+      gCtx.globalAlpha = 1;
+    }
+    gCtx.restore();
+  }
+
+  // Signal tower (Level 5)
+  if (signalTower) {
+    const sp = toScreen(signalTower.x, signalTower.y);
+    if (sp.y > -200 && sp.y < sh + 200) {
+      gCtx.save();
+      gCtx.strokeStyle = '#E8D5A3';
+      gCtx.lineWidth = 2;
+      gCtx.globalAlpha = 0.8;
+      gCtx.beginPath();
+      gCtx.moveTo(sp.x, sp.y + 30);
+      gCtx.lineTo(sp.x, sp.y - 30);
+      gCtx.stroke();
+      gCtx.beginPath();
+      gCtx.moveTo(sp.x - 10, sp.y - 30);
+      gCtx.lineTo(sp.x + 10, sp.y - 30);
+      gCtx.stroke();
+      gCtx.globalAlpha = 1;
+      if (signalTower.blinkOn) {
+        gCtx.fillStyle = '#FF8C42';
+        gCtx.shadowColor = '#FF8C42';
+        gCtx.shadowBlur = 24;
+        gCtx.beginPath();
+        gCtx.arc(sp.x, sp.y - 34, 4, 0, Math.PI * 2);
+        gCtx.fill();
+        gCtx.shadowBlur = 0;
+      }
+      // Proximity glow
+      const bwy = worldY + blipSY;
+      const tdist = Math.sqrt((signalTower.x - blipWorldX)**2 + (signalTower.y - bwy)**2);
+      if (tdist < 1000) {
+        const t = (1000 - tdist) / 1000;
+        const shimR = 15 + t * 40;
+        gCtx.globalAlpha = t * 0.5;
+        const grad = gCtx.createRadialGradient(sp.x, sp.y-34, 0, sp.x, sp.y-34, shimR);
+        grad.addColorStop(0, '#FF8C42');
+        grad.addColorStop(1, 'rgba(255,140,66,0)');
+        gCtx.fillStyle = grad;
+        gCtx.beginPath();
+        gCtx.arc(sp.x, sp.y-34, shimR, 0, Math.PI * 2);
+        gCtx.fill();
+        gCtx.globalAlpha = 1;
+      }
+      gCtx.restore();
+    }
+  }
+
+  // Zone marker line
+  const lvl = LEVELS[currentLevel];
+  if (currentLevel < 4) {
+    const msp = toScreen(0, lvl.totalDist);
+    const distToMarker = lvl.totalDist - worldY;
+    if (distToMarker < 400 && msp.y < sh + 10) {
+      const alpha = Math.min(1, (400 - distToMarker) / 400) * 0.7;
+      gCtx.globalAlpha = alpha;
+      gCtx.strokeStyle = '#E8D5A3';
+      gCtx.lineWidth = 1;
+      gCtx.beginPath();
+      gCtx.moveTo(0, msp.y);
+      gCtx.lineTo(sw, msp.y);
+      gCtx.stroke();
+      if (lvl.nextZone) {
+        gCtx.font = '10px "Courier New",Courier,monospace';
+        gCtx.fillStyle = '#E8D5A3';
+        gCtx.textAlign = 'center';
+        gCtx.fillText(lvl.nextZone, sw/2, msp.y - 8);
+      }
+      gCtx.globalAlpha = 1;
+    }
+  }
+
+  // Draw Blip (at fixed screen position)
+  if (!deadState) {
+    const bsx = sw / 2;
+    const bsy = blipSY;
+    // Invincibility flash at 8Hz
+    if (invincTimer > 0 && Math.floor(invincTimer * 8) % 2 === 1) {
+      // skip (flashing off)
+    } else {
+      drawBlip(gCtx, bsx, bsy, invincTimer > 0);
+    }
+  }
+}
+
+function drawBlip(ctx, x, y, invincible) {
+  ctx.save();
+  ctx.translate(x, y);
+
+  const bodyColor = invincible ? '#FFFFFF' : '#E8D5A3';
+  const panelColor = invincible ? '#FFFFFF' : '#4A9ECD';
+
+  // Thruster glows
+  if (thrustRight) {
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = '#FF8C42';
+    ctx.shadowColor = '#FF8C42';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.ellipse(-24, 14, 10, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+  if (thrustLeft) {
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = '#FF8C42';
+    ctx.shadowColor = '#FF8C42';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.ellipse(24, 14, 10, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  // Body
+  ctx.fillStyle = bodyColor;
+  ctx.beginPath();
+  ctx.arc(0, 0, 18, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Solar panels
+  ctx.fillStyle = panelColor;
+  ctx.fillRect(-66, -4, 28, 8); // left panel
+  ctx.fillRect(38, -4, 28, 8);  // right panel
+
+  // Antenna
+  ctx.strokeStyle = bodyColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -18);
+  ctx.lineTo(0, -44);
+  ctx.stroke();
+
+  // Antenna tip (bloom)
+  ctx.fillStyle = '#FF8C42';
+  ctx.shadowColor = '#FF8C42';
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(0, -48, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Camera eye
+  ctx.fillStyle = '#1E3A5F';
+  ctx.strokeStyle = '#FF8C42';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#FF8C42';
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.arc(10, 4, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#FF8C42';
+  ctx.beginPath();
+  ctx.arc(10, 4, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Thruster bodies
+  ctx.fillStyle = '#6A5A4A';
+  ctx.fillRect(-27, 12, 6, 10);
+  ctx.fillRect(21, 12, 6, 10);
+
+  ctx.restore();
+}
+
+// ─── DRAW HUD ─────────────────────────────────────────────────────────────────
+function drawHUD() {
+  const sw = window.innerWidth, sh = window.innerHeight;
+  hCtx.clearRect(0, 0, sw, sh);
+
+  // Lives
+  for (let i = 0; i < 3; i++) {
+    const lx = 18 + i * 30, ly = 24;
+    hCtx.globalAlpha = i < lives ? 1.0 : 0.2;
+    hCtx.fillStyle = '#E8D5A3';
+    hCtx.beginPath();
+    hCtx.arc(lx, ly, 8, 0, Math.PI * 2);
+    hCtx.fill();
+    hCtx.fillStyle = '#4A9ECD';
+    hCtx.fillRect(lx - 14, ly - 2, 6, 4);
+    hCtx.fillRect(lx + 8,  ly - 2, 6, 4);
+  }
+  hCtx.globalAlpha = 1;
+
+  // Distance
+  hCtx.font = '14px "Courier New",Courier,monospace';
+  hCtx.fillStyle = '#FFFFFF';
+  hCtx.textAlign = 'right';
+  hCtx.fillText(`${Math.floor(worldY / 100)} km`, sw - 16, 24);
+
+  // Zone name
+  hCtx.font = '12px "Courier New",Courier,monospace';
+  hCtx.fillStyle = '#4A9ECD';
+  hCtx.textAlign = 'center';
+  hCtx.fillText(LEVELS[currentLevel].name, sw/2, sh - 16);
+}
+
+// ─── INPUT ────────────────────────────────────────────────────────────────────
+const activePointers = new Map();
+
+document.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+
+  if (gameState === 'start') {
+    initAudio().catch(() => {});
+    showInstructions();
+    return;
+  }
+
+  if (gameState === 'instructions') {
+    startGame();
+    return;
+  }
+
+  if (gameState === 'dead-zone') {
+    document.getElementById('death-screen').style.display = 'none';
+    gameState = 'playing';
+    initLevel(currentLevel);
+    lastFrameT = performance.now();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  if (gameState === 'win') {
+    document.getElementById('win-screen').style.display = 'none';
+    lives = 3;
+    score = 0;
+    gameState = 'playing';
+    initLevel(0);
+    lastFrameT = performance.now();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  if (gameState === 'playing') {
+    const side = e.clientX < window.innerWidth / 2 ? 'L' : 'R';
+    activePointers.set(e.pointerId, side);
+    updateThrust();
+  }
+}, { capture: true, passive: false });
+
+document.addEventListener('pointerup', (e) => {
+  activePointers.delete(e.pointerId);
+  updateThrust();
+}, { capture: true, passive: false });
+
+document.addEventListener('pointercancel', (e) => {
+  activePointers.delete(e.pointerId);
+  updateThrust();
+}, { capture: true, passive: false });
+
+function updateThrust() {
+  const prevL = thrustLeft, prevR = thrustRight;
+  thrustLeft = false; thrustRight = false;
+  for (const [, side] of activePointers) {
+    if (side === 'L') thrustLeft = true;
+    if (side === 'R') thrustRight = true;
+  }
+  if (gameState === 'playing') {
+    if (thrustLeft !== prevL) playThrusterL(thrustLeft);
+    if (thrustRight !== prevR) playThrusterR(thrustRight);
+  }
+}
+
+// ─── SCREEN TRANSITION ────────────────────────────────────────────────────────
+function showInstructions() {
+  gameState = 'instructions';
+  const overlay = document.getElementById('startScreen');
+  const instr = document.getElementById('instructions');
+  overlay.style.transition = 'opacity 0.3s ease';
+  overlay.style.opacity = '0';
+  setTimeout(() => { overlay.style.display = 'none'; }, 300);
+  instr.style.display = 'flex';
+  instr.style.opacity = '0';
+  instr.style.transition = 'opacity 0.3s ease';
+  requestAnimationFrame(() => requestAnimationFrame(() => { instr.style.opacity = '1'; }));
+}
+
+// Prevent context menu and extra scroll
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+</script>
+</body>
+</html>
